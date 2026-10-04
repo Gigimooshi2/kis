@@ -31,8 +31,8 @@ jobs:
           KEYSTORE_B64: ${{ secrets.DEBUG_KEYSTORE_B64 }}
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
-            mkdir -p ~/.android
-            echo "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/kis.keystore"
+            echo "KIS_KEYSTORE=$RUNNER_TEMP/kis.keystore" >> "$GITHUB_ENV"
             echo "Using persistent signing key"
           else
             echo "::warning::DEBUG_KEYSTORE_B64 secret not set - APK signed with a throwaway key, updates will need an uninstall first"
