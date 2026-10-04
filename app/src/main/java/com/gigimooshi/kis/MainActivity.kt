@@ -624,10 +624,15 @@ class MainActivity : Activity() {
 
     private fun checkForUpdates(force: Boolean) {
         val app = applicationContext
+        if (force) toast("Checking for updates…")
         Thread {
             val msg = try {
                 val rel = Updater.checkAndDownload(app, force)
-                if (rel == null && force) "You're on the latest version (build ${Updater.installedVersion(app)})" else null
+                when {
+                    rel != null && force -> "Build ${rel.versionCode} downloaded. Close settings and tap the blue banner."
+                    force -> "You're on the latest version (build ${Updater.installedVersion(app)})"
+                    else -> null
+                }
             } catch (e: Exception) {
                 if (force) "Update check failed: ${e.message}" else null
             }
