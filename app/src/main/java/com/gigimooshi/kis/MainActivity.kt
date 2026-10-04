@@ -6,18 +6,29 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
+import android.content.res.ColorStateList
+import android.content.res.Configuration
+import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Drawable
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.text.SpannableString
+import android.text.Spanned
+import android.text.TextUtils
+import android.text.style.RelativeSizeSpan
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.widget.Button
+import android.view.WindowManager
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.NumberPicker
 import android.widget.ScrollView
@@ -25,6 +36,7 @@ import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import java.time.Instant
+import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
@@ -33,43 +45,30 @@ import java.util.Locale
 class MainActivity : Activity() {
 
     private lateinit var store: BudgetStore
-    private lateinit var banner: TextView
+    private lateinit var c: Palette
+
+    private lateinit var accessBanner: TextView
     private lateinit var updateBanner: TextView
     private lateinit var balanceView: TextView
-    private lateinit var subView: TextView
+    private lateinit var bar: BarView
+    private lateinit var usedView: TextView
+    private lateinit var nextView: TextView
     private lateinit var discoveryBox: LinearLayout
     private lateinit var historyBox: LinearLayout
 
     private val onChange: () -> Unit = { render() }
-    private val timeFmt = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault())
-
-    private val green = 0xFF2E7D32.toInt()
-    private val red = 0xFFC62828.toInt()
+    private val timeFmt = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
+    private val dayFmt = DateTimeFormatter.ofPattern("EEEE, d MMM", Locale.getDefault())
+    private val fullFmt = DateTimeFormatter.ofPattern("EEE d MMM yyyy, HH:mm", Locale.getDefault())
+    private val medium: Typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+    private val bold: Typeface = Typeface.create("sans-serif", Typeface.BOLD)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = BudgetStore.get(this)
+        c = Palette(this)
         setContentView(buildUi())
         KisApp.takeLastCrash(application)?.let { showCrash(it) }
-    }
-
-    private fun showCrash(trace: String) {
-        val text = TextView(this).apply {
-            this.text = trace
-            textSize = 11f
-            setTextIsSelectable(true)
-            setPadding(dp(20), dp(8), dp(20), dp(8))
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Kis crashed last time")
-            .setView(ScrollView(this).apply { addView(text) })
-            .setPositiveButton("Copy") { _, _ ->
-                getSystemService(ClipboardManager::class.java)
-                    ?.setPrimaryClip(ClipData.newPlainText("Kis crash", trace))
-                toast("Copied, paste it to Claude")
-            }
-            .setNegativeButton("Dismiss", null)
-            .show()
     }
 
     override fun onResume() {
@@ -90,137 +89,263 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
-    // ---- layout ------------------------------------------------------------
+    // ---- view helpers ------------------------------------------------------
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun dpf(v: Int) = v * resources.displayMetrics.density
     private fun matchWrap() = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
     private fun weighted() = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
 
-    private fun header(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 18f
-        typeface = Typeface.DEFAULT_BOLD
-        setPadding(0, dp(16), 0, dp(6))
+    private fun rounded(color: Int, radiusDp: Int) = GradientDrawable().apply {
+        setColor(color)
+        cornerRadius = dpf(radiusDp)
     }
 
-    private fun muted(text: String) = TextView(this).apply {
-        this.text = text
-        textSize = 13f
-        alpha = 0.65f
-        setPadding(0, dp(4), 0, dp(4))
+    private fun ripple(content: Drawable?, radiusDp: Int) =
+        RippleDrawable(ColorStateList.valueOf(c.ripple), content, rounded(Color.WHITE, radiusDp))
+
+    private fun label(s: CharSequence, size: Float, color: Int, face: Typeface = Typeface.DEFAULT) = TextView(this).apply {
+        text = s
+        textSize = size
+        setTextColor(color)
+        typeface = face
     }
+
+    private fun card() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = rounded(c.surface, 24)
+        setPadding(dp(18), dp(16), dp(18), dp(16))
+    }
+
+    private fun pill(text: String, filled: Boolean, onClick: () -> Unit) = TextView(this).apply {
+        this.text = text
+        gravity = Gravity.CENTER
+        textSize = 16f
+        typeface = medium
+        setTextColor(if (filled) c.onAccent else c.accent)
+        setPadding(dp(20), dp(15), dp(20), dp(15))
+        background = ripple(rounded(if (filled) c.accent else c.accentSoft, 28), 28)
+        setOnClickListener { onClick() }
+    }
+
+    private fun banner(bgColor: Int, fg: Int, onClick: () -> Unit) = TextView(this).apply {
+        textSize = 14f
+        typeface = medium
+        setTextColor(fg)
+        setPadding(dp(16), dp(14), dp(16), dp(14))
+        background = ripple(rounded(bgColor, 18), 18)
+        setOnClickListener { onClick() }
+    }
+
+    private fun sectionTitle(text: String) = label(text, 13f, c.accent, medium).apply {
+        setPadding(0, dp(18), 0, dp(4))
+        isAllCaps = true
+        letterSpacing = 0.06f
+    }
+
+    private val isNight: Boolean
+        get() = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
+    private fun dialog() = AlertDialog.Builder(
+        this,
+        if (isNight) android.R.style.Theme_DeviceDefault_Dialog_Alert
+        else android.R.style.Theme_DeviceDefault_Light_Dialog_Alert,
+    )
+
+    private fun balanceText(agorot: Long): CharSequence {
+        val s = Money.fmt(agorot)
+        val sp = SpannableString(s)
+        val shekel = s.indexOf('₪')
+        if (shekel >= 0) sp.setSpan(RelativeSizeSpan(0.62f), shekel, shekel + 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val dot = s.lastIndexOf('.')
+        if (dot >= 0) sp.setSpan(RelativeSizeSpan(0.5f), dot, s.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return sp
+    }
+
+    // ---- layout ------------------------------------------------------------
 
     private fun buildUi(): View {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(28), dp(20), dp(28))
+            setPadding(dp(18), dp(8), dp(18), dp(36))
         }
 
-        banner = TextView(this).apply {
-            text = "⚠ Notification access is off, so payments aren't being tracked. Tap to fix."
-            setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(red)
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            setOnClickListener { showAccessHelp() }
+        // top bar
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(8), 0, dp(14))
         }
-        root.addView(banner, matchWrap().apply { bottomMargin = dp(16) })
-
-        updateBanner = TextView(this).apply {
-            setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xFF1565C0.toInt())
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-            setOnClickListener { onUpdateBannerTap() }
-        }
-        root.addView(updateBanner, matchWrap().apply { bottomMargin = dp(16) })
-
-        root.addView(muted("Available"))
-        balanceView = TextView(this).apply {
-            textSize = 52f
-            typeface = Typeface.DEFAULT_BOLD
-        }
-        root.addView(balanceView)
-        subView = muted("")
-        root.addView(subView, matchWrap().apply { bottomMargin = dp(16) })
-
-        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        buttons.addView(Button(this).apply {
-            text = "− Expense"
-            setOnClickListener { showExpenseDialog() }
-        }, weighted())
-        buttons.addView(Button(this).apply {
-            text = "Settings"
+        top.addView(label("Kis", 30f, c.text, bold), weighted())
+        top.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_settings)
+            imageTintList = ColorStateList.valueOf(c.text2)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = ripple(null, 22)
+            contentDescription = "Settings"
             setOnClickListener { showSettingsDialog() }
-        }, weighted().apply { marginStart = dp(8) })
-        root.addView(buttons, matchWrap())
+        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        root.addView(top, matchWrap())
+
+        accessBanner = banner(c.negSoft, c.neg) { showAccessHelp() }
+        root.addView(accessBanner, matchWrap().apply { bottomMargin = dp(12) })
+        updateBanner = banner(c.infoSoft, c.info) { onUpdateBannerTap() }
+        root.addView(updateBanner, matchWrap().apply { bottomMargin = dp(12) })
+
+        // hero card
+        val hero = card().apply { setPadding(dp(22), dp(20), dp(22), dp(22)) }
+        hero.addView(label("Available", 14f, c.text2, medium))
+        balanceView = label("", 50f, c.text, bold).apply {
+            includeFontPadding = false
+            setPadding(0, dp(8), 0, dp(18))
+        }
+        hero.addView(balanceView)
+        bar = BarView(this)
+        hero.addView(bar, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(10)))
+        usedView = label("", 14f, c.text, medium).apply { setPadding(0, dp(12), 0, 0) }
+        hero.addView(usedView)
+        nextView = label("", 13f, c.text2).apply { setPadding(0, dp(4), 0, 0) }
+        hero.addView(nextView)
+        root.addView(hero, matchWrap())
+
+        root.addView(pill("+  Add expense", filled = true) { showExpenseDialog() }, matchWrap().apply { topMargin = dp(14) })
 
         discoveryBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(discoveryBox, matchWrap())
 
-        root.addView(header("History"))
         historyBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        root.addView(historyBox, matchWrap())
+        root.addView(historyBox, matchWrap().apply { topMargin = dp(10) })
 
-        return ScrollView(this).apply { addView(root) }
+        return ScrollView(this).apply {
+            setBackgroundColor(c.bg)
+            isFillViewport = true
+            addView(root)
+        }
     }
 
     // ---- render ------------------------------------------------------------
 
     private fun render() {
-        banner.visibility = if (hasListenerAccess()) View.GONE else View.VISIBLE
+        accessBanner.text = "Notification access is off, so payments aren't tracked. Tap to fix."
+        accessBanner.visibility = if (hasListenerAccess()) View.GONE else View.VISIBLE
         renderUpdate()
 
         val bal = store.balance
-        balanceView.text = Money.fmt(bal)
-        balanceView.setTextColor(if (bal >= 0) green else red)
+        val spent = store.spentThisPeriod().coerceAtLeast(0L)
+        val total = bal + spent
+        val ratio = if (total <= 0L) 1f else spent.toFloat() / total
+
+        balanceView.text = balanceText(bal)
+        balanceView.setTextColor(if (bal < 0) c.neg else c.text)
+        bar.setColors(c.track, when {
+            bal < 0 -> c.neg
+            ratio >= 0.75f -> c.warn
+            else -> c.accent
+        })
+        bar.setRatio(ratio)
+        usedView.text = if (bal < 0) {
+            "Over budget by ${Money.fmt(-bal)}"
+        } else {
+            "${Money.fmt(spent, compact = true)} of ${Money.fmt(total, compact = true)} used today"
+        }
 
         val now = ZonedDateTime.now()
         val next = store.nextCredit(now)
         val day = if (next.toLocalDate() == now.toLocalDate()) "today" else "tomorrow"
-        val mode = if (store.rollover) "unused budget stacks" else "resets daily"
-        subView.text = String.format(
-            Locale.US, "Next +%s %s at %02d:00 · %s",
-            Money.fmt(store.dailyAgorot), day, store.creditHour, mode,
+        nextView.text = String.format(
+            Locale.US, "+%s %s at %02d:00 · %s",
+            Money.fmt(store.dailyAgorot, compact = true), day, store.creditHour,
+            if (store.rollover) "leftovers stack" else "resets daily",
         )
 
         renderDiscovery()
+        renderHistory()
+    }
 
+    private fun renderHistory() {
         historyBox.removeAllViews()
-        val txs = store.transactions()
-        if (txs.isEmpty()) historyBox.addView(muted("Nothing yet."))
-        txs.forEach { historyBox.addView(txRow(it)) }
-        if (txs.isNotEmpty()) historyBox.addView(muted("Long-press an entry to delete it."))
+        val txs = store.transactions().take(150)
+        if (txs.isEmpty()) {
+            historyBox.addView(label("No activity yet.\nPayments show up here as you make them.", 14f, c.text2).apply {
+                gravity = Gravity.CENTER
+                setPadding(0, dp(40), 0, 0)
+            }, matchWrap())
+            return
+        }
+        val zone = ZoneId.systemDefault()
+        val today = LocalDate.now(zone)
+        txs.groupBy { Instant.ofEpochMilli(it.time).atZone(zone).toLocalDate() }.forEach { (date, items) ->
+            val name = when (date) {
+                today -> "Today"
+                today.minusDays(1) -> "Yesterday"
+                else -> dayFmt.format(date)
+            }
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                setPadding(dp(6), dp(18), dp(6), dp(8))
+            }
+            header.addView(label(name, 14f, c.text2, medium), weighted())
+            val out = items.filter { it.isSpend }.sumOf { -it.amount }
+            if (out > 0) header.addView(label("${Money.fmt(out)} spent", 13f, c.text2))
+            historyBox.addView(header, matchWrap())
+
+            val group = card().apply { setPadding(dp(4), dp(4), dp(4), dp(4)) }
+            items.forEach { group.addView(txRow(it), matchWrap()) }
+            historyBox.addView(group, matchWrap())
+        }
+        historyBox.addView(label("Tap an entry for details or to delete it.", 12f, c.text2).apply {
+            gravity = Gravity.CENTER
+            setPadding(0, dp(18), 0, 0)
+        }, matchWrap())
+    }
+
+    private fun avatarFor(tx: Tx): Pair<String, Int> = when (tx.source) {
+        Tx.SRC_DAILY -> "+" to c.accent
+        Tx.SRC_ADJUST -> "±" to c.text2
+        else -> {
+            val ch = tx.label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "₪"
+            ch to Palette.AVATARS[Math.floorMod(tx.label.hashCode(), Palette.AVATARS.size)]
+        }
+    }
+
+    private fun sourceName(tx: Tx) = when (tx.source) {
+        Tx.SRC_PAY -> "Auto"
+        Tx.SRC_MANUAL -> "Manual"
+        Tx.SRC_DAILY -> "Daily budget"
+        else -> "Adjustment"
     }
 
     private fun txRow(tx: Tx): View {
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(10), 0, dp(10))
+            setPadding(dp(12), dp(10), dp(14), dp(10))
+            background = ripple(null, 20)
         }
-        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        left.addView(TextView(this).apply {
-            text = tx.label
-            textSize = 16f
-            maxLines = 2
-        })
-        val src = when (tx.source) {
-            Tx.SRC_PAY -> " · auto"
-            Tx.SRC_MANUAL -> " · manual"
-            else -> ""
+        val (letter, color) = avatarFor(tx)
+        row.addView(label(letter, 16f, if (tx.source == Tx.SRC_DAILY) c.onAccent else Color.WHITE, bold).apply {
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(color)
+            }
+        }, LinearLayout.LayoutParams(dp(40), dp(40)))
+
+        val mid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), 0, dp(10), 0)
         }
-        left.addView(TextView(this).apply {
-            text = timeFmt.format(Instant.ofEpochMilli(tx.time).atZone(ZoneId.systemDefault())) + src
-            textSize = 12f
-            alpha = 0.6f
+        mid.addView(label(tx.label, 15f, c.text, medium).apply {
+            maxLines = 1
+            ellipsize = TextUtils.TruncateAt.END
         })
-        row.addView(left, weighted())
-        row.addView(TextView(this).apply {
-            text = Money.fmt(tx.amount, showPlus = true)
-            textSize = 16f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(if (tx.amount >= 0) green else red)
-            setPadding(dp(12), 0, 0, 0)
-        })
+        mid.addView(label(
+            "${timeFmt.format(Instant.ofEpochMilli(tx.time).atZone(ZoneId.systemDefault()))} · ${sourceName(tx)}",
+            12f, c.text2,
+        ))
+        row.addView(mid, weighted())
+        row.addView(label(Money.fmt(tx.amount, showPlus = true), 15f, if (tx.amount > 0) c.accent else c.text, bold))
+        row.setOnClickListener { showTxDetails(tx) }
         row.setOnLongClickListener { confirmDelete(tx); true }
         return row
     }
@@ -228,24 +353,26 @@ class MainActivity : Activity() {
     private fun renderDiscovery() {
         discoveryBox.removeAllViews()
         if (!store.discoveryMode) return
-        discoveryBox.addView(header("Discovery log"))
-        discoveryBox.addView(muted("Notifications containing ₪ amounts. Tap an entry to start tracking that app."))
+        discoveryBox.addView(sectionTitle("Discovery log"))
+        val box = card()
+        box.addView(label("Notifications containing ₪ amounts. Tap one to start tracking that app.", 13f, c.text2))
         val log = store.discoveryLog()
-        if (log.isEmpty()) discoveryBox.addView(muted("Nothing captured yet — make a payment."))
+        if (log.isEmpty()) box.addView(label("Nothing captured yet. Make a payment.", 14f, c.text).apply { setPadding(0, dp(12), 0, 0) })
         log.forEach { e ->
-            discoveryBox.addView(TextView(this).apply {
-                text = "${e.pkg}\n${e.text}\n→ ${e.note}"
-                textSize = 13f
-                setPadding(0, dp(8), 0, dp(8))
+            box.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(10), dp(10), dp(10), dp(10))
+                background = ripple(null, 14)
+                addView(label(e.pkg, 12f, c.accent, medium))
+                addView(label(e.text, 14f, c.text).apply { setPadding(0, dp(2), 0, dp(2)) })
+                addView(label("→ ${e.note}", 12f, c.text2))
                 setOnClickListener { offerWatch(e.pkg) }
-            })
+            }, matchWrap().apply { topMargin = dp(6) })
         }
         if (log.isNotEmpty()) {
-            discoveryBox.addView(Button(this).apply {
-                text = "Clear log"
-                setOnClickListener { store.clearDiscovery() }
-            }, matchWrap())
+            box.addView(pill("Clear log", filled = false) { store.clearDiscovery() }, matchWrap().apply { topMargin = dp(10) })
         }
+        discoveryBox.addView(box, matchWrap())
     }
 
     // ---- dialogs -----------------------------------------------------------
@@ -253,37 +380,42 @@ class MainActivity : Activity() {
     private fun form(vararg views: View): View {
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(24), dp(8), dp(24), dp(8))
+            setPadding(dp(24), dp(4), dp(24), dp(12))
         }
         views.forEach { box.addView(it, matchWrap()) }
         return ScrollView(this).apply { addView(box) }
     }
 
+    private fun fieldLabel(text: String) = label(text, 13f, c.text2).apply { setPadding(0, dp(12), 0, 0) }
+
     private fun decimalField(hint: String, signed: Boolean = false) = EditText(this).apply {
         this.hint = hint
+        textSize = 18f
         inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL or
             (if (signed) InputType.TYPE_NUMBER_FLAG_SIGNED else 0)
     }
 
     private fun showExpenseDialog() {
-        val amount = decimalField("Amount (₪)")
-        val label = EditText(this).apply {
-            hint = "What for (optional)"
+        val amount = decimalField("₪ 0.00").apply { textSize = 26f; typeface = bold }
+        val what = EditText(this).apply {
+            hint = "What for? (optional)"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
         }
-        AlertDialog.Builder(this)
+        val d = dialog()
             .setTitle("Add expense")
-            .setView(form(amount, label))
+            .setView(form(amount, what))
             .setPositiveButton("Subtract") { _, _ ->
                 val a = Money.parseInput(amount.text.toString())
                 if (a == null || a <= 0) {
                     toast("Invalid amount")
                 } else {
-                    store.addExpense(a, label.text.toString().trim().ifEmpty { "Manual expense" }, Tx.SRC_MANUAL, null)
+                    store.addExpense(a, what.text.toString().trim().ifEmpty { "Manual expense" }, Tx.SRC_MANUAL, null)
                 }
             }
             .setNegativeButton("Cancel", null)
-            .show()
+            .create()
+        d.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        d.show()
         amount.requestFocus()
     }
 
@@ -302,10 +434,16 @@ class MainActivity : Activity() {
         }
         val roll = Switch(this).apply {
             text = "Stack unused budget to the next day"
+            textSize = 15f
             isChecked = store.rollover
-            setPadding(0, dp(12), 0, dp(12))
+            setPadding(0, dp(14), 0, dp(6))
         }
         val balance = decimalField("0", signed = true).apply { setText(Money.plain(shownBalance)) }
+        val widgetN = EditText(this).apply {
+            setText(store.widgetCount.toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            textSize = 18f
+        }
         val pkgs = EditText(this).apply {
             setText(store.watchedPackages().joinToString("\n"))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -313,41 +451,45 @@ class MainActivity : Activity() {
             minLines = 2
             textSize = 13f
         }
-        val autoUpd = Switch(this).apply {
-            text = "Auto-update from GitHub"
-            isChecked = Updater.autoUpdate(this@MainActivity)
-            setPadding(0, dp(16), 0, dp(4))
-        }
-        val checkBtn = Button(this).apply {
-            text = "Check for updates (installed: build ${Updater.installedVersion(this@MainActivity)})"
-            setOnClickListener { checkForUpdates(force = true) }
-        }
         val discovery = Switch(this).apply {
             text = "Discovery mode"
+            textSize = 15f
             isChecked = store.discoveryMode
-            setPadding(0, dp(12), 0, dp(4))
+            setPadding(0, dp(14), 0, dp(4))
+        }
+        val autoUpd = Switch(this).apply {
+            text = "Auto-update from GitHub"
+            textSize = 15f
+            isChecked = Updater.autoUpdate(this@MainActivity)
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val checkBtn = pill("Check for updates · build ${Updater.installedVersion(this)}", filled = false) {
+            checkForUpdates(force = true)
         }
 
-        AlertDialog.Builder(this)
+        dialog()
             .setTitle("Settings")
             .setView(
                 form(
-                    muted("Daily amount (₪)"), daily,
-                    muted("Added every day at"), hour,
+                    sectionTitle("Budget"),
+                    fieldLabel("Daily amount (₪)"), daily,
+                    fieldLabel("Added every day at"), hour,
                     roll,
-                    muted("Current balance (₪) — edit to correct it"), balance,
-                    muted("Apps to read payments from (package names, one per line)"), pkgs,
+                    fieldLabel("Current balance (₪), edit to correct it"), balance,
+                    sectionTitle("Widget"),
+                    fieldLabel("Recent expenses to show (1–30, fewer if the widget is small)"), widgetN,
+                    sectionTitle("Tracking"),
+                    fieldLabel("Apps to read payments from (package names, one per line)"), pkgs,
                     discovery,
-                    muted("Logs ₪ notifications from every app without counting them. Use it to check parsing or find the right app."),
+                    label("Logs ₪ notifications from every app without counting them. Use it to check parsing or find the right app.", 12f, c.text2),
+                    sectionTitle("Updates"),
                     autoUpd,
                     checkBtn,
                 )
             )
             .setPositiveButton("Save") { _, _ ->
                 val newDaily = Money.parseInput(daily.text.toString())
-                if (newDaily == null || newDaily < 0) {
-                    toast("Invalid daily amount — kept the old one")
-                }
+                if (newDaily == null || newDaily < 0) toast("Invalid daily amount, kept the old one")
                 store.updateSettings(
                     daily = newDaily?.takeIf { it >= 0 } ?: store.dailyAgorot,
                     hour = hour.value,
@@ -355,6 +497,7 @@ class MainActivity : Activity() {
                     packages = pkgs.text.toString(),
                     discovery = discovery.isChecked,
                 )
+                widgetN.text.toString().trim().toIntOrNull()?.let { store.setWidgetCount(it) }
                 Updater.setAutoUpdate(this, autoUpd.isChecked)
                 val newBal = Money.parseInput(balance.text.toString())
                 if (newBal != null && newBal != shownBalance) store.setBalance(newBal)
@@ -363,15 +506,26 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun confirmDelete(tx: Tx) {
+    private fun showTxDetails(tx: Tx) {
         val msg = buildString {
-            append("${tx.label}\n${Money.fmt(tx.amount, showPlus = true)}\n\n")
-            append("Deleting changes the balance by ${Money.fmt(-tx.amount, showPlus = true)}.")
+            append(Money.fmt(tx.amount, showPlus = true))
+            append("\n")
+            append(fullFmt.format(Instant.ofEpochMilli(tx.time).atZone(ZoneId.systemDefault())))
+            append(" · ${sourceName(tx)}")
             if (tx.raw != null) append("\n\nOriginal notification:\n${tx.raw}")
         }
-        AlertDialog.Builder(this)
-            .setTitle("Delete entry?")
+        dialog()
+            .setTitle(tx.label)
             .setMessage(msg)
+            .setNegativeButton("Delete") { _, _ -> confirmDelete(tx) }
+            .setPositiveButton("Close", null)
+            .show()
+    }
+
+    private fun confirmDelete(tx: Tx) {
+        dialog()
+            .setTitle("Delete entry?")
+            .setMessage("${tx.label}  ${Money.fmt(tx.amount, showPlus = true)}\n\nThe balance changes by ${Money.fmt(-tx.amount, showPlus = true)}.")
             .setPositiveButton("Delete") { _, _ -> store.deleteTx(tx.id) }
             .setNegativeButton("Cancel", null)
             .show()
@@ -382,7 +536,7 @@ class MainActivity : Activity() {
             toast("Already tracking $pkg")
             return
         }
-        AlertDialog.Builder(this)
+        dialog()
             .setTitle("Track this app?")
             .setMessage("Payments from $pkg will be subtracted from the budget.")
             .setPositiveButton("Track") { _, _ -> store.addWatchedPackage(pkg) }
@@ -391,21 +545,35 @@ class MainActivity : Activity() {
     }
 
     private fun showAccessHelp() {
-        AlertDialog.Builder(this)
+        dialog()
             .setTitle("Allow notification access")
             .setMessage(
                 "Turn on \"${getString(R.string.app_name)}\" in the next screen.\n\n" +
-                    "If it's greyed out / says \"Restricted setting\" (Android 13+ does this for apps " +
+                    "If it's greyed out or says \"Restricted setting\" (Android 13+ does this for apps " +
                     "installed from an APK): open App info → ⋮ menu (top right) → " +
                     "\"Allow restricted settings\", then try again."
             )
             .setPositiveButton("Notification access") { _, _ -> openListenerSettings() }
             .setNeutralButton("App info") { _, _ ->
-                startActivity(
-                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
-                )
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
             }
             .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun showCrash(trace: String) {
+        val text = label(trace, 11f, c.text).apply {
+            setTextIsSelectable(true)
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        dialog()
+            .setTitle("Kis crashed last time")
+            .setView(ScrollView(this).apply { addView(text) })
+            .setPositiveButton("Copy") { _, _ ->
+                getSystemService(ClipboardManager::class.java)?.setPrimaryClip(ClipData.newPlainText("Kis crash", trace))
+                toast("Copied, paste it to Claude")
+            }
+            .setNegativeButton("Dismiss", null)
             .show()
     }
 
@@ -417,7 +585,7 @@ class MainActivity : Activity() {
         val text = when {
             st != null && file != null -> "$st\nTap to retry."
             st != null -> st
-            file != null -> "⬆ Kis update (build ${Updater.pendingVersion(this)}) is ready. Tap to install."
+            file != null -> "Kis update (build ${Updater.pendingVersion(this)}) is ready. Tap to install."
             else -> null
         }
         updateBanner.text = text ?: ""
@@ -432,7 +600,7 @@ class MainActivity : Activity() {
             return
         }
         if (!Updater.canInstall(this)) {
-            AlertDialog.Builder(this)
+            dialog()
                 .setTitle("Allow Kis to install updates")
                 .setMessage(
                     "Android needs this once. Turn on \"Allow from this source\", come back, and tap the banner again.\n\n" +

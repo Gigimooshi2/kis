@@ -1,4 +1,21 @@
 <resources>
     <color name="brand">#2E7D32</color>
     <color name="ic_bg">#2E7D32</color>
+
+    <color name="bg">#F3F5F1</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="text">#1B1F1B</color>
+    <color name="text2">#667066</color>
+    <color name="accent">#2E7D32</color>
+    <color name="accent_soft">#DCEFDC</color>
+    <color name="on_accent">#FFFFFF</color>
+    <color name="neg">#C62828</color>
+    <color name="neg_soft">#FBE4E2</color>
+    <color name="warn">#E39A0E</color>
+    <color name="track">#E4E9E2</color>
+    <color name="info">#1458B8</color>
+    <color name="info_soft">#E1ECFB</color>
+    <color name="ripple">#1F000000</color>
+
+    <color name="w_bg">#F5FFFFFF</color>
 </resources>

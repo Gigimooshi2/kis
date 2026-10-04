@@ -20,6 +20,9 @@ data class Tx(
     val source: String,
     val raw: String?,
 ) {
+    /** Real spending (or a refund of it), as opposed to daily credits and balance corrections. */
+    val isSpend: Boolean get() = source == SRC_PAY || source == SRC_MANUAL
+
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("t", time).put("a", amount)
         .put("l", label).put("s", source)
@@ -65,6 +68,7 @@ class BudgetStore private constructor(private val ctx: Context) {
         private const val K_NEXT_ID = "next_id"
         private const val K_SEEN = "seen"
         private const val K_DISC_LOG = "disc_log"
+        private const val K_WIDGET_N = "widget_n"
 
         private const val MAX_TX = 300
         private const val MAX_DISC = 40
@@ -87,6 +91,14 @@ class BudgetStore private constructor(private val ctx: Context) {
     val rollover: Boolean get() = prefs.getBoolean(K_ROLL, true)
     val discoveryMode: Boolean get() = prefs.getBoolean(K_DISC, false)
     val balance: Long get() = prefs.getLong(K_BAL, 0L)
+
+    /** How many recent expenses the widget lists (it also caps this to what fits). */
+    val widgetCount: Int get() = prefs.getInt(K_WIDGET_N, 10)
+
+    fun setWidgetCount(n: Int) {
+        prefs.edit().putInt(K_WIDGET_N, n.coerceIn(1, 30)).apply()
+        changed()
+    }
 
     fun watchedPackages(): List<String> =
         (prefs.getString(K_PKGS, null) ?: DEFAULT_PACKAGES)
@@ -114,6 +126,20 @@ class BudgetStore private constructor(private val ctx: Context) {
         val today = now.toLocalDate().atTime(creditHour, 0).atZone(now.zone)
         return if (today.isAfter(now)) today else now.toLocalDate().plusDays(1).atTime(creditHour, 0).atZone(now.zone)
     }
+
+    /** When the current budget day started (today or yesterday at the credit hour). */
+    fun periodStart(now: ZonedDateTime = ZonedDateTime.now()): Long =
+        budgetDay(now).atTime(creditHour, 0).atZone(now.zone).toInstant().toEpochMilli()
+
+    /** Net spending since the current budget day started (refunds subtract). */
+    @Synchronized
+    fun spentThisPeriod(now: ZonedDateTime = ZonedDateTime.now()): Long {
+        val start = periodStart(now)
+        return loadTxs().filter { it.time >= start && it.isSpend }.sumOf { -it.amount }
+    }
+
+    @Synchronized
+    fun recentExpenses(n: Int): List<Tx> = loadTxs().filter { it.isSpend && it.amount < 0 }.take(n)
 
     @Synchronized
     fun catchUp(now: ZonedDateTime = ZonedDateTime.now()) {

@@ -1,0 +1,18 @@
+<resources>
+    <color name="bg">#0E110F</color>
+    <color name="surface">#191E1A</color>
+    <color name="text">#E9EDE8</color>
+    <color name="text2">#97A197</color>
+    <color name="accent">#6CC070</color>
+    <color name="accent_soft">#1E3320</color>
+    <color name="on_accent">#0E110F</color>
+    <color name="neg">#F06A62</color>
+    <color name="neg_soft">#3A1E1C</color>
+    <color name="warn">#FFB84D</color>
+    <color name="track">#2A312B</color>
+    <color name="info">#7FB2FF</color>
+    <color name="info_soft">#16263D</color>
+    <color name="ripple">#26FFFFFF</color>
+
+    <color name="w_bg">#F2191E1A</color>
+</resources>

@@ -1,4 +1,4 @@
 <resources>
     <string name="app_name">Kis</string>
-    <string name="widget_desc">Remaining budget</string>
+    <string name="widget_desc">Balance, budget used today, and recent expenses</string>
 </resources>
