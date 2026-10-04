@@ -10,9 +10,18 @@ and Google Pay / Google Wallet payment notifications are subtracted automaticall
 - **Discovery mode** (Settings): logs every notification that contains a ₪ amount, plus tracked-app
   notifications the parser couldn't read. Use it if payments aren't being picked up.
 
+## Updates
+
+Kis updates itself from this repo's GitHub releases (same approach as GigiKav):
+- Checks every ~4 hours and when opened, downloads new builds quietly.
+- The **first** update needs a tap on the blue banner (and allowing "Install unknown apps" for Kis).
+- After that, on Android 12+, updates install silently while Kis is closed.
+- Toggle / manual check: Settings → Auto-update.
+- Requires the repo to be **public** (the app reads `github.com/Gigimooshi2/kis/releases/latest` without a token).
+
 ## Build
 
-Push to `main` → GitHub Actions builds the APK and publishes it to a rolling release:
+Push to `main` → GitHub Actions builds the APK and publishes release `v1.0.<run number>`:
 
     https://github.com/Gigimooshi2/kis/releases/latest/download/kis.apk
 

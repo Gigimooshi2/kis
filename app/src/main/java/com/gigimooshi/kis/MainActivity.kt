@@ -31,6 +31,7 @@ class MainActivity : Activity() {
 
     private lateinit var store: BudgetStore
     private lateinit var banner: TextView
+    private lateinit var updateBanner: TextView
     private lateinit var balanceView: TextView
     private lateinit var subView: TextView
     private lateinit var discoveryBox: LinearLayout
@@ -50,13 +51,18 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        Updater.visible = true
         store.addListener(onChange)
         store.catchUp()
         render()
+        Updater.schedule(this)
+        if (Updater.autoUpdate(this)) checkForUpdates(force = false)
     }
 
     override fun onPause() {
+        Updater.visible = false
         store.removeListener(onChange)
+        Updater.soon(this)
         super.onPause()
     }
 
@@ -95,6 +101,14 @@ class MainActivity : Activity() {
         }
         root.addView(banner, matchWrap().apply { bottomMargin = dp(16) })
 
+        updateBanner = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt())
+            setBackgroundColor(0xFF1565C0.toInt())
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setOnClickListener { onUpdateBannerTap() }
+        }
+        root.addView(updateBanner, matchWrap().apply { bottomMargin = dp(16) })
+
         root.addView(muted("Available"))
         balanceView = TextView(this).apply {
             textSize = 52f
@@ -129,6 +143,7 @@ class MainActivity : Activity() {
 
     private fun render() {
         banner.visibility = if (hasListenerAccess()) View.GONE else View.VISIBLE
+        renderUpdate()
 
         val bal = store.balance
         balanceView.text = Money.fmt(bal)
@@ -274,6 +289,15 @@ class MainActivity : Activity() {
             minLines = 2
             textSize = 13f
         }
+        val autoUpd = Switch(this).apply {
+            text = "Auto-update from GitHub"
+            isChecked = Updater.autoUpdate(this@MainActivity)
+            setPadding(0, dp(16), 0, dp(4))
+        }
+        val checkBtn = Button(this).apply {
+            text = "Check for updates (installed: build ${Updater.installedVersion(this@MainActivity)})"
+            setOnClickListener { checkForUpdates(force = true) }
+        }
         val discovery = Switch(this).apply {
             text = "Discovery mode"
             isChecked = store.discoveryMode
@@ -291,6 +315,8 @@ class MainActivity : Activity() {
                     muted("Apps to read payments from (package names, one per line)"), pkgs,
                     discovery,
                     muted("Logs ₪ notifications from every app without counting them. Use it to check parsing or find the right app."),
+                    autoUpd,
+                    checkBtn,
                 )
             )
             .setPositiveButton("Save") { _, _ ->
@@ -305,6 +331,7 @@ class MainActivity : Activity() {
                     packages = pkgs.text.toString(),
                     discovery = discovery.isChecked,
                 )
+                Updater.setAutoUpdate(this, autoUpd.isChecked)
                 val newBal = Money.parseInput(balance.text.toString())
                 if (newBal != null && newBal != shownBalance) store.setBalance(newBal)
             }
@@ -356,6 +383,67 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Later", null)
             .show()
+    }
+
+    // ---- updates -----------------------------------------------------------
+
+    private fun renderUpdate() {
+        val file = Updater.pendingFile(this)
+        val st = Updater.status
+        val text = when {
+            st != null && file != null -> "$st\nTap to retry."
+            st != null -> st
+            file != null -> "⬆ Kis update (build ${Updater.pendingVersion(this)}) is ready. Tap to install."
+            else -> null
+        }
+        updateBanner.text = text ?: ""
+        updateBanner.visibility = if (text == null) View.GONE else View.VISIBLE
+    }
+
+    private fun onUpdateBannerTap() {
+        Updater.status = null
+        val file = Updater.pendingFile(this)
+        if (file == null) {
+            render()
+            return
+        }
+        if (!Updater.canInstall(this)) {
+            AlertDialog.Builder(this)
+                .setTitle("Allow Kis to install updates")
+                .setMessage(
+                    "Android needs this once. Turn on \"Allow from this source\", come back, and tap the banner again.\n\n" +
+                        "After the first update, new versions install on their own while Kis is closed."
+                )
+                .setPositiveButton("Open settings") { _, _ -> Updater.openInstallPermission(this) }
+                .setNegativeButton("Later", null)
+                .show()
+            return
+        }
+        toast("Installing… Kis will close; open it again after.")
+        Thread {
+            try {
+                Updater.install(applicationContext, file, silent = false)
+            } catch (e: Exception) {
+                Updater.status = "Update failed: ${e.message}"
+                runOnUiThread { render() }
+            }
+        }.start()
+    }
+
+    private fun checkForUpdates(force: Boolean) {
+        val app = applicationContext
+        Thread {
+            val msg = try {
+                val rel = Updater.checkAndDownload(app, force)
+                if (rel == null && force) "You're on the latest version (build ${Updater.installedVersion(app)})" else null
+            } catch (e: Exception) {
+                if (force) "Update check failed: ${e.message}" else null
+            }
+            runOnUiThread {
+                if (msg != null) toast(msg)
+                render()
+            }
+        }.start()
     }
 
     // ---- system ------------------------------------------------------------
