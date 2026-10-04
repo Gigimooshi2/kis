@@ -2,6 +2,8 @@ package com.gigimooshi.kis
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.ComponentName
 import android.content.Intent
 import android.graphics.Typeface
@@ -10,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.text.InputType
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -47,6 +50,26 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         store = BudgetStore.get(this)
         setContentView(buildUi())
+        KisApp.takeLastCrash(application)?.let { showCrash(it) }
+    }
+
+    private fun showCrash(trace: String) {
+        val text = TextView(this).apply {
+            this.text = trace
+            textSize = 11f
+            setTextIsSelectable(true)
+            setPadding(dp(20), dp(8), dp(20), dp(8))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Kis crashed last time")
+            .setView(ScrollView(this).apply { addView(text) })
+            .setPositiveButton("Copy") { _, _ ->
+                getSystemService(ClipboardManager::class.java)
+                    ?.setPrimaryClip(ClipData.newPlainText("Kis crash", trace))
+                toast("Copied, paste it to Claude")
+            }
+            .setNegativeButton("Dismiss", null)
+            .show()
     }
 
     override fun onResume() {
@@ -55,14 +78,15 @@ class MainActivity : Activity() {
         store.addListener(onChange)
         store.catchUp()
         render()
-        Updater.schedule(this)
+        // The updater must never crash the app: a crashing app can't update itself.
+        runCatching { Updater.schedule(this) }.onFailure { Log.w("Kis", "schedule failed", it) }
         if (Updater.autoUpdate(this)) checkForUpdates(force = false)
     }
 
     override fun onPause() {
         Updater.visible = false
         store.removeListener(onChange)
-        Updater.soon(this)
+        runCatching { Updater.soon(this) }.onFailure { Log.w("Kis", "soon failed", it) }
         super.onPause()
     }
 
