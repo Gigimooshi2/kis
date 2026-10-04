@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Kis</string>
+    <string name="widget_desc">Remaining budget</string>
+</resources>
