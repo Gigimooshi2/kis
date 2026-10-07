@@ -1,6 +1,7 @@
 package com.gigimooshi.kis
 
 import android.app.Activity
+import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -474,6 +475,16 @@ class MainActivity : Activity() {
         val checkBtn = pill("Check for updates · build ${Updater.installedVersion(this)}", filled = false) {
             checkForUpdates(force = true)
         }
+        val resetBtn = TextView(this).apply {
+            text = "Reset Kis…"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            typeface = medium
+            setTextColor(c.neg)
+            setPadding(dp(20), dp(15), dp(20), dp(15))
+            background = ripple(rounded(c.negSoft, 28), 28)
+            setOnClickListener { confirmReset() }
+        }
 
         dialog()
             .setTitle("Settings")
@@ -493,6 +504,9 @@ class MainActivity : Activity() {
                     sectionTitle("Updates"),
                     autoUpd,
                     checkBtn,
+                    sectionTitle("Reset"),
+                    label("Deletes everything Kis stores, like a fresh install.", 12f, c.text2).apply { setPadding(0, 0, 0, dp(8)) },
+                    resetBtn,
                 )
             )
             .setPositiveButton("Save") { _, _ ->
@@ -512,6 +526,31 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun confirmReset() {
+        dialog()
+            .setTitle("Reset Kis?")
+            .setMessage(
+                "This deletes the balance, history, settings, discovery log and downloaded updates, " +
+                    "same as a fresh install. It can't be undone.\n\n" +
+                    "Kis will close. Open it again to start over."
+            )
+            .setPositiveButton("Reset") { _, _ -> factoryReset() }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    /** Same as Settings → Apps → Kis → Storage → Clear storage. Android kills the process afterwards. */
+    private fun factoryReset() {
+        val cleared = runCatching { getSystemService(ActivityManager::class.java)?.clearApplicationUserData() }.getOrNull()
+        if (cleared == true) return
+        // Fallback: wipe our own files, then exit so no stale in-memory state survives.
+        listOf("budget", "updater", "crash").forEach { runCatching { deleteSharedPreferences(it) } }
+        runCatching { cacheDir.deleteRecursively() }
+        runCatching { filesDir.deleteRecursively() }
+        finishAffinity()
+        kotlin.system.exitProcess(0)
     }
 
     private fun showTxDetails(tx: Tx) {
