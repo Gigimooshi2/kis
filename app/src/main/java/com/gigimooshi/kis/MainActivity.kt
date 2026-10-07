@@ -16,6 +16,7 @@ import android.graphics.drawable.RippleDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
 import android.text.SpannableString
@@ -49,6 +50,7 @@ class MainActivity : Activity() {
 
     private lateinit var accessBanner: TextView
     private lateinit var updateBanner: TextView
+    private lateinit var batteryBanner: TextView
     private lateinit var balanceView: TextView
     private lateinit var bar: BarView
     private lateinit var usedView: TextView
@@ -76,6 +78,7 @@ class MainActivity : Activity() {
         Updater.visible = true
         store.addListener(onChange)
         store.catchUp()
+        if (hasListenerAccess()) PayListener.rebind(this)
         render()
         // The updater must never crash the app: a crashing app can't update itself.
         runCatching { Updater.schedule(this) }.onFailure { Log.w("Kis", "schedule failed", it) }
@@ -191,6 +194,8 @@ class MainActivity : Activity() {
         root.addView(accessBanner, matchWrap().apply { bottomMargin = dp(12) })
         updateBanner = banner(c.infoSoft, c.info) { onUpdateBannerTap() }
         root.addView(updateBanner, matchWrap().apply { bottomMargin = dp(12) })
+        batteryBanner = banner(c.negSoft, c.neg) { showBatteryHelp() }
+        root.addView(batteryBanner, matchWrap().apply { bottomMargin = dp(12) })
 
         // hero card
         val hero = card().apply { setPadding(dp(22), dp(20), dp(22), dp(22)) }
@@ -227,7 +232,10 @@ class MainActivity : Activity() {
 
     private fun render() {
         accessBanner.text = "Notification access is off, so payments aren't tracked. Tap to fix."
-        accessBanner.visibility = if (hasListenerAccess()) View.GONE else View.VISIBLE
+        val access = hasListenerAccess()
+        accessBanner.visibility = if (access) View.GONE else View.VISIBLE
+        batteryBanner.text = "Android may stop Kis in the background, so payments only count while it's open. Tap to fix."
+        batteryBanner.visibility = if (access && !isUnrestricted()) View.VISIBLE else View.GONE
         renderUpdate()
 
         val bal = store.balance
@@ -641,6 +649,38 @@ class MainActivity : Activity() {
                 render()
             }
         }.start()
+    }
+
+    // ---- background ----------------------------------------------------------
+
+    private fun isUnrestricted(): Boolean =
+        getSystemService(PowerManager::class.java)?.isIgnoringBatteryOptimizations(packageName) ?: true
+
+    private fun showBatteryHelp() {
+        dialog()
+            .setTitle("Let Kis run in the background")
+            .setMessage(
+                "Kis reads payment notifications as they arrive. If Android puts it to sleep, " +
+                    "payments are only caught while the app is open.\n\n" +
+                    "Tap Allow, then choose Allow / Unrestricted.\n\n" +
+                    "Samsung, also: Settings → Battery → Background usage limits → make sure Kis isn't in " +
+                    "Sleeping or Deep sleeping apps (add it to Never sleeping apps).\n\n" +
+                    "Xiaomi/Redmi, also: App info → Autostart on, Battery saver → No restrictions."
+            )
+            .setPositiveButton("Allow") { _, _ -> requestUnrestricted() }
+            .setNeutralButton("App info") { _, _ ->
+                startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+            }
+            .setNegativeButton("Later", null)
+            .show()
+    }
+
+    private fun requestUnrestricted() {
+        try {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        } catch (e: Exception) {
+            runCatching { startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)) }
+        }
     }
 
     // ---- system ------------------------------------------------------------

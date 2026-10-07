@@ -67,6 +67,7 @@ class BudgetStore private constructor(private val ctx: Context) {
         private const val K_TXS = "txs"
         private const val K_NEXT_ID = "next_id"
         private const val K_SEEN = "seen"
+        private const val K_SEEN_PERM = "seen_perm"
         private const val K_DISC_LOG = "disc_log"
         private const val K_WIDGET_N = "widget_n"
 
@@ -183,11 +184,16 @@ class BudgetStore private constructor(private val ctx: Context) {
         JSONArray().also { arr -> list.forEach { arr.put(it.toJson()) } }.toString()
 
     /** Applies a signed amount to the balance, records it, and persists [e] along with it. */
-    private fun commitTx(e: SharedPreferences.Editor, amount: Long, label: String, source: String, raw: String?) {
+    private fun commitTx(
+        e: SharedPreferences.Editor, amount: Long, label: String, source: String, raw: String?,
+        time: Long = System.currentTimeMillis(),
+    ) {
         if (amount != 0L) {
             val list = loadTxs()
             val id = prefs.getLong(K_NEXT_ID, 1L)
-            list.add(0, Tx(id, System.currentTimeMillis(), amount, label, source, raw))
+            // Newest first; a payment caught up late still lands at its real time.
+            val at = list.indexOfFirst { it.time <= time }.let { if (it < 0) list.size else it }
+            list.add(at, Tx(id, time, amount, label, source, raw))
             while (list.size > MAX_TX) list.removeAt(list.size - 1)
             e.putLong(K_NEXT_ID, id + 1)
                 .putLong(K_BAL, balance + amount)
@@ -198,15 +204,15 @@ class BudgetStore private constructor(private val ctx: Context) {
     }
 
     @Synchronized
-    fun addExpense(agorot: Long, label: String, source: String, raw: String?) {
+    fun addExpense(agorot: Long, label: String, source: String, raw: String?, time: Long = System.currentTimeMillis()) {
         catchUp()
-        commitTx(prefs.edit(), -agorot, label, source, raw)
+        commitTx(prefs.edit(), -agorot, label, source, raw, time)
     }
 
     @Synchronized
-    fun addCredit(agorot: Long, label: String, source: String, raw: String?) {
+    fun addCredit(agorot: Long, label: String, source: String, raw: String?, time: Long = System.currentTimeMillis()) {
         catchUp()
-        commitTx(prefs.edit(), agorot, label, source, raw)
+        commitTx(prefs.edit(), agorot, label, source, raw, time)
     }
 
     @Synchronized
@@ -253,7 +259,33 @@ class BudgetStore private constructor(private val ctx: Context) {
 
     // ---- notification dedup ------------------------------------------------
 
-    /** True if this signature was already counted in the last few minutes (notification updates repost). */
+    /**
+     * True if this payment was already counted. Two checks:
+     * - [window]: same notification + amount in the last few minutes (apps repost/update notifications)
+     * - [permanent]: same notification + its timestamp + amount, ever (last 300) — so rescanning the
+     *   notification shade after Kis was asleep doesn't count anything twice.
+     */
+    @Synchronized
+    fun alreadyCounted(window: String, permanent: String): Boolean {
+        val inWindow = seenRecently(window)
+        val arr = runCatching { JSONArray(prefs.getString(K_SEEN_PERM, "[]") ?: "[]") }.getOrElse { JSONArray() }
+        val list = MutableList(arr.length()) { arr.getString(it) }
+        val seen = permanent in list
+        if (!seen) {
+            list.add(permanent)
+            while (list.size > 300) list.removeAt(0)
+            prefs.edit().putString(K_SEEN_PERM, JSONArray(list).toString()).apply()
+        }
+        return inWindow || seen
+    }
+
+    /** False until the first catch-up scan has recorded what was already in the shade. */
+    fun dedupSeeded(): Boolean = prefs.contains(K_SEEN_PERM)
+
+    fun markDedupSeeded() {
+        if (!prefs.contains(K_SEEN_PERM)) prefs.edit().putString(K_SEEN_PERM, "[]").apply()
+    }
+
     @Synchronized
     fun seenRecently(sig: String, now: Long = System.currentTimeMillis()): Boolean {
         val obj = runCatching { JSONObject(prefs.getString(K_SEEN, "{}") ?: "{}") }.getOrElse { JSONObject() }

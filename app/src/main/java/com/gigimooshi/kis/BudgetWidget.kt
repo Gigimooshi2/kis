@@ -26,6 +26,7 @@ class BudgetWidget : AppWidgetProvider() {
 
     override fun onUpdate(context: Context, manager: AppWidgetManager, ids: IntArray) {
         runCatching { BudgetStore.get(context).catchUp() } // credits the day if the hour passed
+        PayListener.rebind(context)
         refresh(context)
     }
 
