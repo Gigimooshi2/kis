@@ -453,6 +453,12 @@ class MainActivity : Activity() {
             inputType = InputType.TYPE_CLASS_NUMBER
             textSize = 18f
         }
+        val widgetIncome = Switch(this).apply {
+            text = "Show money added too (daily budget, refunds)"
+            textSize = 15f
+            isChecked = store.widgetShowIncome
+            setPadding(0, dp(12), 0, dp(4))
+        }
         val pkgs = EditText(this).apply {
             setText(store.watchedPackages().joinToString("\n"))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
@@ -496,7 +502,8 @@ class MainActivity : Activity() {
                     roll,
                     fieldLabel("Current balance (₪), edit to correct it"), balance,
                     sectionTitle("Widget"),
-                    fieldLabel("Recent expenses to show (1–30, fewer if the widget is small)"), widgetN,
+                    fieldLabel("Recent entries to show (1–30, fewer if the widget is small)"), widgetN,
+                    widgetIncome,
                     sectionTitle("Tracking"),
                     fieldLabel("Apps to read payments from (package names, one per line)"), pkgs,
                     discovery,
@@ -520,6 +527,7 @@ class MainActivity : Activity() {
                     discovery = discovery.isChecked,
                 )
                 widgetN.text.toString().trim().toIntOrNull()?.let { store.setWidgetCount(it) }
+                store.setWidgetShowIncome(widgetIncome.isChecked)
                 Updater.setAutoUpdate(this, autoUpd.isChecked)
                 val newBal = Money.parseInput(balance.text.toString())
                 if (newBal != null && newBal != shownBalance) store.setBalance(newBal)

@@ -70,6 +70,7 @@ class BudgetStore private constructor(private val ctx: Context) {
         private const val K_SEEN_PERM = "seen_perm"
         private const val K_DISC_LOG = "disc_log"
         private const val K_WIDGET_N = "widget_n"
+        private const val K_WIDGET_INCOME = "widget_income"
 
         private const val MAX_TX = 300
         private const val MAX_DISC = 40
@@ -95,6 +96,14 @@ class BudgetStore private constructor(private val ctx: Context) {
 
     /** How many recent expenses the widget lists (it also caps this to what fits). */
     val widgetCount: Int get() = prefs.getInt(K_WIDGET_N, 10)
+
+    /** Widget also lists money added (daily budget, refunds, corrections). */
+    val widgetShowIncome: Boolean get() = prefs.getBoolean(K_WIDGET_INCOME, true)
+
+    fun setWidgetShowIncome(on: Boolean) {
+        prefs.edit().putBoolean(K_WIDGET_INCOME, on).apply()
+        changed()
+    }
 
     fun setWidgetCount(n: Int) {
         prefs.edit().putInt(K_WIDGET_N, n.coerceIn(1, 30)).apply()
@@ -141,6 +150,10 @@ class BudgetStore private constructor(private val ctx: Context) {
 
     @Synchronized
     fun recentExpenses(n: Int): List<Tx> = loadTxs().filter { it.isSpend && it.amount < 0 }.take(n)
+
+    /** What the widget lists: expenses only, or every entry when [widgetShowIncome] is on. */
+    @Synchronized
+    fun recentForWidget(n: Int): List<Tx> = if (widgetShowIncome) loadTxs().take(n) else recentExpenses(n)
 
     @Synchronized
     fun catchUp(now: ZonedDateTime = ZonedDateTime.now()) {

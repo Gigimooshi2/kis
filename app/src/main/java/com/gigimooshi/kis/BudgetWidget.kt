@@ -45,9 +45,12 @@ class BudgetWidget : AppWidgetProvider() {
     companion object {
         private const val ACTION_REFRESH = "com.gigimooshi.kis.WIDGET_REFRESH"
 
-        // Rough layout heights (dp) to decide how many rows fit.
-        private const val HEADER_DP = 118
-        private const val ROW_DP = 22
+        // Rough layout heights (dp) to decide how many rows fit; text parts scale with font size.
+        private const val HEADER_FIXED_DP = 91f
+        private const val HEADER_TEXT_DP = 28f
+        private const val ROW_FIXED_DP = 6f
+        private const val ROW_TEXT_DP = 16f
+        private const val SAFETY_DP = 12f // some launchers report a bit more height than they draw
 
         fun refresh(context: Context) {
             val manager = AppWidgetManager.getInstance(context) ?: return
@@ -111,12 +114,18 @@ class BudgetWidget : AppWidgetProvider() {
 
             // How many rows fit: portrait height is OPTION_APPWIDGET_MAX_HEIGHT.
             val heightDp = manager.getAppWidgetOptions(id)?.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0) ?: 0
-            val fits = if (heightDp <= 0) store.widgetCount else ((heightDp - HEADER_DP) / ROW_DP).coerceAtLeast(0)
+            val fs = context.resources.configuration.fontScale
+            val fits = if (heightDp <= 0) {
+                store.widgetCount
+            } else {
+                ((heightDp - HEADER_FIXED_DP - HEADER_TEXT_DP * fs - SAFETY_DP) / (ROW_FIXED_DP + ROW_TEXT_DP * fs))
+                    .toInt().coerceAtLeast(0)
+            }
             val n = minOf(store.widgetCount, fits)
             v.setViewVisibility(R.id.widget_used, if (heightDp in 1..89) View.GONE else View.VISIBLE)
 
             v.removeAllViews(R.id.widget_list)
-            val items = if (n > 0) store.recentExpenses(n) else emptyList()
+            val items = if (n > 0) store.recentForWidget(n) else emptyList()
             val zone = ZoneId.systemDefault()
             val today = LocalDate.now(zone)
             val time = DateTimeFormatter.ofPattern("HH:mm", Locale.getDefault())
@@ -129,15 +138,17 @@ class BudgetWidget : AppWidgetProvider() {
                     R.id.row_when,
                     when (at.toLocalDate()) {
                         today -> time.format(at)
-                        today.minusDays(1) -> "Yesterday"
+                        today.minusDays(1) -> "Yest."
                         else -> day.format(at)
                     },
                 )
-                row.setTextViewText(R.id.row_amount, Money.fmt(tx.amount))
+                row.setTextViewText(R.id.row_amount, Money.fmt(tx.amount, showPlus = true, compact = true))
+                if (tx.amount > 0) row.setTextColor(R.id.row_amount, context.getColor(R.color.accent))
                 v.addView(R.id.widget_list, row)
             }
             v.setViewVisibility(R.id.widget_list, if (items.isEmpty()) View.GONE else View.VISIBLE)
             v.setViewVisibility(R.id.widget_empty, if (n > 0 && items.isEmpty()) View.VISIBLE else View.GONE)
+            v.setTextViewText(R.id.widget_empty, if (store.widgetShowIncome) "No activity yet" else "No expenses yet")
 
             val open = PendingIntent.getActivity(
                 context, 0, Intent(context, MainActivity::class.java),
