@@ -302,7 +302,7 @@ class MainActivity : Activity() {
             items.forEach { group.addView(txRow(it), matchWrap()) }
             historyBox.addView(group, matchWrap())
         }
-        historyBox.addView(label("Tap an entry for details or to delete it.", 12f, c.text2).apply {
+        historyBox.addView(label("Tap an entry to edit or delete it.", 12f, c.text2).apply {
             gravity = Gravity.CENTER
             setPadding(0, dp(18), 0, 0)
         }, matchWrap())
@@ -572,9 +572,41 @@ class MainActivity : Activity() {
         dialog()
             .setTitle(tx.label)
             .setMessage(msg)
-            .setNegativeButton("Delete") { _, _ -> confirmDelete(tx) }
-            .setPositiveButton("Close", null)
+            .setNeutralButton("Delete") { _, _ -> confirmDelete(tx) }
+            .setNegativeButton("Close", null)
+            .setPositiveButton("Edit") { _, _ -> showEditDialog(tx) }
             .show()
+    }
+
+    private fun showEditDialog(tx: Tx) {
+        val spending = tx.amount < 0
+        val amount = decimalField("₪ 0.00").apply {
+            textSize = 26f
+            typeface = bold
+            setText(Money.plain(kotlin.math.abs(tx.amount)))
+            setSelectAllOnFocus(true)
+        }
+        val name = EditText(this).apply {
+            setText(tx.label)
+            hint = "Name"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        val d = dialog()
+            .setTitle("Edit entry")
+            .setView(form(fieldLabel(if (spending) "Amount spent (₪)" else "Amount added (₪)"), amount, fieldLabel("Name"), name))
+            .setPositiveButton("Save") { _, _ ->
+                val a = Money.parseInput(amount.text.toString())
+                if (a == null || a <= 0) {
+                    toast("Invalid amount")
+                } else {
+                    store.editTx(tx.id, if (spending) -a else a, name.text.toString().trim().ifEmpty { tx.label })
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .create()
+        d.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE)
+        d.show()
+        amount.requestFocus()
     }
 
     private fun confirmDelete(tx: Tx) {

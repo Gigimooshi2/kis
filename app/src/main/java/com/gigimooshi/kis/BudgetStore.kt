@@ -234,6 +234,21 @@ class BudgetStore private constructor(private val ctx: Context) {
         commitTx(prefs.edit(), target - balance, "Balance adjusted", Tx.SRC_ADJUST, null)
     }
 
+    /** Changes an entry's amount (signed) and name; the balance moves by the difference. */
+    @Synchronized
+    fun editTx(id: Long, amount: Long, label: String) {
+        val list = loadTxs()
+        val i = list.indexOfFirst { it.id == id }
+        if (i < 0) return
+        val old = list[i]
+        list[i] = old.copy(amount = amount, label = label.take(60))
+        prefs.edit()
+            .putLong(K_BAL, balance + (amount - old.amount))
+            .putString(K_TXS, txsJson(list))
+            .apply()
+        changed()
+    }
+
     /** Removes an entry and reverses its effect on the balance. */
     @Synchronized
     fun deleteTx(id: Long) {
