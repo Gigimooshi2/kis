@@ -71,6 +71,10 @@ class BudgetStore private constructor(private val ctx: Context) {
         private const val K_DISC_LOG = "disc_log"
         private const val K_WIDGET_N = "widget_n"
         private const val K_WIDGET_INCOME = "widget_income"
+        private const val K_DIAG_CONNECTED = "diag_connected"
+        private const val K_DIAG_DISCONNECTED = "diag_disconnected"
+        private const val K_DIAG_SEEN = "diag_seen"
+        private const val K_DIAG_SEEN_PKG = "diag_seen_pkg"
 
         private const val MAX_TX = 300
         private const val MAX_DISC = 40
@@ -306,6 +310,26 @@ class BudgetStore private constructor(private val ctx: Context) {
         }
         return inWindow || seen
     }
+
+    // ---- diagnostics (shown in Settings → Status) ---------------------------
+
+    fun noteListener(connected: Boolean) {
+        prefs.edit().putLong(if (connected) K_DIAG_CONNECTED else K_DIAG_DISCONNECTED, System.currentTimeMillis()).apply()
+    }
+
+    fun noteSeen(pkg: String) {
+        prefs.edit().putLong(K_DIAG_SEEN, System.currentTimeMillis()).putString(K_DIAG_SEEN_PKG, pkg).apply()
+    }
+
+    val lastConnected: Long get() = prefs.getLong(K_DIAG_CONNECTED, 0L)
+    val lastDisconnected: Long get() = prefs.getLong(K_DIAG_DISCONNECTED, 0L)
+    val lastSeen: Long get() = prefs.getLong(K_DIAG_SEEN, 0L)
+    val lastSeenPkg: String? get() = prefs.getString(K_DIAG_SEEN_PKG, null)
+
+    /** An auto-tracked payment of this amount within a few minutes of [time] is already in the history. */
+    @Synchronized
+    fun hasMatchingPayment(agorot: Long, time: Long, windowMs: Long = 3 * 60_000L): Boolean =
+        loadTxs().any { it.source == Tx.SRC_PAY && kotlin.math.abs(it.amount) == agorot && kotlin.math.abs(it.time - time) <= windowMs }
 
     /** False until the first catch-up scan has recorded what was already in the shade. */
     fun dedupSeeded(): Boolean = prefs.contains(K_SEEN_PERM)

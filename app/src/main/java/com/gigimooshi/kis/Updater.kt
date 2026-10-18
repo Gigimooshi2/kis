@@ -214,7 +214,7 @@ object Updater {
 
     /** Runs on a background thread from [UpdateJob]. */
     fun backgroundRun(ctx: Context) {
-        PayListener.rebind(ctx)
+        PayListener.catchUp(ctx)
         if (!autoUpdate(ctx)) return
         checkAndDownload(ctx, force = false)
         val file = pendingFile(ctx) ?: return

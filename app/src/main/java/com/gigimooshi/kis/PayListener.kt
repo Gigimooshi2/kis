@@ -11,46 +11,62 @@ import android.util.Log
 class PayListener : NotificationListenerService() {
 
     companion object {
-        /**
-         * Ask Android to reconnect the listener if a battery manager cut it off. Cheap and harmless
-         * when already connected; called whenever Kis gets to run (app open, widget, update job).
-         */
+        @Volatile private var connected: PayListener? = null
+
+        /** Ask Android to reconnect the listener if a battery manager cut it off. */
         fun rebind(ctx: Context) {
             runCatching { requestRebind(ComponentName(ctx, PayListener::class.java)) }
+        }
+
+        /**
+         * Count any payment still sitting in the notification shade that was missed.
+         * Called whenever Kis gets to run (app open, widget refresh, update job). If the listener is
+         * connected it scans right away; otherwise Android is asked to reconnect, which also scans.
+         */
+        fun catchUp(ctx: Context) {
+            val l = connected
+            if (l != null) l.scanShade() else rebind(ctx)
         }
     }
 
     override fun onListenerConnected() {
         super.onListenerConnected()
-        // Payments that arrived while Kis was asleep may still be in the notification shade.
-        // The very first time (fresh install, or the update that added this), only record what's
-        // there: those were either already counted or predate Kis.
+        connected = this
+        BudgetStore.get(this).noteListener(connected = true)
+        scanShade()
+    }
+
+    override fun onListenerDisconnected() {
+        if (connected === this) connected = null
+        BudgetStore.get(this).noteListener(connected = false)
+        super.onListenerDisconnected()
+        rebind(this)
+    }
+
+    override fun onDestroy() {
+        if (connected === this) connected = null
+        super.onDestroy()
+    }
+
+    fun scanShade() {
         try {
-            val store = BudgetStore.get(this)
-            val count = store.dedupSeeded()
-            activeNotifications?.forEach { sbn -> runCatching { handle(sbn, count) } }
-            store.markDedupSeeded()
+            activeNotifications?.forEach { sbn -> runCatching { handle(sbn, catchUp = true) } }
         } catch (t: Throwable) {
             Log.w("Kis", "catch-up scan failed", t)
         }
     }
 
-    override fun onListenerDisconnected() {
-        super.onListenerDisconnected()
-        rebind(this)
-    }
-
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
         try {
-            handle(sbn, count = true)
+            handle(sbn, catchUp = false)
         } catch (t: Throwable) {
             Log.w("Kis", "Failed to handle notification from ${sbn.packageName}", t)
         }
     }
 
-    /** [count] = false only records the notification as seen (first catch-up scan). */
-    private fun handle(sbn: StatusBarNotification, count: Boolean) {
+    /** [catchUp] = found while rescanning the shade rather than delivered live. */
+    private fun handle(sbn: StatusBarNotification, catchUp: Boolean) {
         val store = BudgetStore.get(this)
         val pkg = sbn.packageName ?: return
         if (pkg == packageName) return
@@ -79,6 +95,7 @@ class PayListener : NotificationListenerService() {
             if (parsed != null) store.logDiscovery(pkg, full, "not tracked")
             return
         }
+        if (!catchUp) store.noteSeen(pkg)
         if (parsed == null) {
             if (store.discoveryMode) store.logDiscovery(pkg, full, "tracked app, but no ₪ amount found")
             return
@@ -89,8 +106,14 @@ class PayListener : NotificationListenerService() {
         }
         val window = "$pkg|${sbn.key}|${parsed.agorot}"
         val permanent = "$pkg|${sbn.key}|${n.`when`}|${parsed.agorot}"
-        if (store.alreadyCounted(window, permanent) || !count) return
         val time = if (sbn.postTime > 0) sbn.postTime else System.currentTimeMillis()
+        if (store.alreadyCounted(window, permanent)) return
+        if (catchUp) {
+            // Older than Kis itself, or already in the history (e.g. counted by a build before
+            // notification signatures were kept): don't count it again.
+            val installed = runCatching { packageManager.getPackageInfo(packageName, 0).firstInstallTime }.getOrDefault(0L)
+            if (time < installed || store.hasMatchingPayment(parsed.agorot, time)) return
+        }
 
         // Merchant name: first line that isn't just the amount.
         val label = (parts.firstOrNull { AmountParser.parse(it) == null } ?: "Payment").take(60)
@@ -100,6 +123,8 @@ class PayListener : NotificationListenerService() {
         } else {
             store.addExpense(parsed.agorot, label, Tx.SRC_PAY, full, time)
         }
-        if (store.discoveryMode) store.logDiscovery(pkg, full, "counted ${Money.fmt(parsed.agorot)}")
+        if (store.discoveryMode) {
+            store.logDiscovery(pkg, full, "counted ${Money.fmt(parsed.agorot)}${if (catchUp) " (caught up later)" else ""}")
+        }
     }
 }

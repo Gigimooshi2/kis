@@ -79,7 +79,7 @@ class MainActivity : Activity() {
         Updater.visible = true
         store.addListener(onChange)
         store.catchUp()
-        if (hasListenerAccess()) PayListener.rebind(this)
+        if (hasListenerAccess()) PayListener.catchUp(this)
         render()
         // The updater must never crash the app: a crashing app can't update itself.
         runCatching { Updater.schedule(this) }.onFailure { Log.w("Kis", "schedule failed", it) }
@@ -481,6 +481,7 @@ class MainActivity : Activity() {
         val checkBtn = pill("Check for updates · build ${Updater.installedVersion(this)}", filled = false) {
             checkForUpdates(force = true)
         }
+        val status = label(statusText(), 13f, c.text2).apply { setTextIsSelectable(true) }
         val resetBtn = TextView(this).apply {
             text = "Reset Kis…"
             gravity = Gravity.CENTER
@@ -511,6 +512,8 @@ class MainActivity : Activity() {
                     sectionTitle("Updates"),
                     autoUpd,
                     checkBtn,
+                    sectionTitle("Status"),
+                    status,
                     sectionTitle("Reset"),
                     label("Deletes everything Kis stores, like a fresh install.", 12f, c.text2).apply { setPadding(0, 0, 0, dp(8)) },
                     resetBtn,
@@ -534,6 +537,20 @@ class MainActivity : Activity() {
             }
             .setNegativeButton("Cancel", null)
             .show()
+    }
+
+    private fun statusText(): String {
+        val f = DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault())
+        fun at(ms: Long) = if (ms <= 0L) "never" else f.format(Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()))
+        val seenFrom = store.lastSeenPkg?.let { " (${it.substringAfterLast('.')})" } ?: ""
+        return buildString {
+            append("Notification access: ${if (hasListenerAccess()) "on" else "OFF"}\n")
+            append("Background: ${if (isUnrestricted()) "unrestricted" else "RESTRICTED"}\n")
+            append("Listener connected: ${at(store.lastConnected)}\n")
+            append("Listener disconnected: ${at(store.lastDisconnected)}\n")
+            append("Last payment notification: ${at(store.lastSeen)}$seenFrom\n")
+            append("Build ${Updater.installedVersion(this@MainActivity)}")
+        }
     }
 
     private fun confirmReset() {
